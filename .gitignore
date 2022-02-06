@@ -1,0 +1,5 @@
+streamql
+test.sql
+*.txt
+
+.gdb_history
