@@ -77,11 +77,7 @@ select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 	process.data = sel
 
 	if sel.const_dest != nil {
-		if q.orderby != nil {
 			sel.select__ = _select_to_const
-		} else {
-			sel.select__ = _select_order_api
-		}
 	} else if is_subquery {
 		sel.select__ = _select_subquery
 	}

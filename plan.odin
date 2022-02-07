@@ -102,25 +102,6 @@ _preempt :: proc(p: ^Plan) {
 }
 
 @(private = "file")
-_make_join_proc :: proc(p: ^Plan, type: Join_Type, algo_str: string) -> Process {
-	msg: string
-	#partial switch type {
-	case .Inner:
-		msg = fmt.tprintf("INNER JOIN (%s)", algo_str)
-	case .Left:
-		msg = fmt.tprintf("LEFT JOIN (%s)", algo_str)
-	case .Right:
-		msg = fmt.tprintf("RIGHT JOIN (%s)", algo_str)
-	case .Full:
-		msg = fmt.tprintf("FULL JOIN (%s)", algo_str)
-	case .Cross:
-		msg = fmt.tprintf("CROSS JOIN (%s)", algo_str)
-	}
-
-	return make_process(p, msg)
-}
-
-@(private = "file")
 _check_for_special_expr :: proc(p: ^Plan, process: ^Process, expr: ^Expression) {
 	#partial switch v in &expr.data {
 	case Expr_Subquery:
@@ -146,102 +127,6 @@ _from :: proc(sql: ^Streamql, q: ^Query) -> Result {
 	if len(q.sources) == 0 {
 		return .Ok
 	}
-
-	from_node: ^bigraph.Node(Process)
-	p := &q.plan
-
-	switch v in &q.sources[0].data {
-	case string: /* File Source */
-		msg := fmt.tprintf("%s: stream read", v)
-		from_proc := make_process(p, msg)
-		from_proc.state += {.Root_Fifo0}
-		from_proc.action__ = sql_read
-		from_proc.data = &q.sources[0]
-		from_node = bigraph.add(&p.proc_graph, from_proc)
-		from_node.is_root = true
-	case ^Query: /* Subquery Source */
-		from_proc := make_process(p, "subquery source1")
-		from_proc.action__ = sql_read
-		from_proc.data = &q.sources[0]
-		from_node = bigraph.add(&p.proc_graph, from_proc)
-		_build(sql, q, from_node) or_return
-		bigraph.consume(&p.proc_graph, &v.plan.proc_graph)
-		destroy_plan(&v.plan)
-	}
-	/* NOTE: This next line may be incorrect */
-	//q.sources[0].read_proc = from_proc
-
-	p.curr.out[0] = from_node
-	p.curr = from_node
-
-	for src, i in &q.sources {
-		if i == 0 {
-			continue
-		}
-		join_proc: Process
-		join_node: ^bigraph.Node(Process)
-		is_hash_join := src.join_data != nil
-		if is_hash_join {
-			join_proc = _make_join_proc(p, src.join_type, "hash")
-			join_proc.action__ = sql_hash_join
-			join_proc.state += {.Has_Second_Input}
-			join_proc.data = &src
-
-			if .Is_Stdin in src.props {
-				reader_start_file_backed_input(&src.schema.data.(Reader))
-			}
-			hash_join_init(&src)
-			
-			read_node: ^bigraph.Node(Process)
-			switch v in &src.data {
-			case string: /* File Source */
-				msg: string
-				if .Is_Stdin in src.props {
-					msg = "file-backed read stdin"
-				} else {
-					msg = fmt.tprintf("%s: random access", v)
-				}
-				read_proc := make_process(p, msg)
-				read_proc.state += {.Root_Fifo0, .Is_Secondary}
-				read_proc.action__ = sql_read
-				read_proc.data = &src
-				read_node = bigraph.add(&p.proc_graph, read_proc)
-				read_node.is_root = true
-			case ^Query: /* Subquery */
-				subquery_start_file_backed_input(&src.schema.data.(Reader))
-				read_proc := make_process(p, "file-backed read subquery")
-				read_proc.state += {.Is_Secondary}
-				read_proc.action__ = sql_read
-				read_proc.data = &src
-				read_node = bigraph.add(&q.plan.proc_graph, read_proc)
-				_build(sql, v, read_node) or_return
-				bigraph.consume(&q.plan.proc_graph, &v.plan.proc_graph)
-				// destroy_plan(&v.plan)
-			}
-
-			join_node := bigraph.add(&q.plan.proc_graph, join_proc)
-			read_node.out[0] = join_node
-		} else { /* Cartesian */
-			if src.join_type != .Inner {
-				fmt.eprintf("cartesian join only works with INNER JOIN\n")
-				return .Error
-			}
-			if _, is_subquery := src.data.(^Query); is_subquery {
-				fmt.eprintf("subquery invalid on the right side of cartesian join\n")
-				return .Error
-			}
-			fmt.eprintf("Warning: slow cartesian join detected\n")
-			join_proc := _make_join_proc(&q.plan, src.join_type, "cartesian")
-			join_proc.state += {.Root_Fifo1}
-			join_proc.data = &src
-			join_node := bigraph.add(&q.plan.proc_graph, join_proc)
-			join_node.is_root = true
-		}
-
-		q.plan.curr.out[0] = join_node
-		q.plan.curr = join_node
-
-	}
 	return .Ok
 }
 
@@ -252,9 +137,6 @@ _where :: proc(sql: ^Streamql, q: ^Query) -> Result {
 
 @(private = "file")
 _group :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if q.groupby == nil {
-		return .Ok
-	}
 	return not_implemented()
 }
 
@@ -298,9 +180,6 @@ _union :: proc(sql: ^Streamql, q: ^Query) -> Result {
 
 @(private = "file")
 _order :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if q.orderby == nil {
-		return .Ok
-	}
 	return not_implemented()
 }
 

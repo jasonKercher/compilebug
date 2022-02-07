@@ -58,7 +58,6 @@ _Branch_State :: enum u8 {
 }
 
 Streamql :: struct {
-	listener: Listener,
 	default_schema: string,
 	schema_map: map[string]^Schema,
 	schema_paths: [dynamic]string,
@@ -116,16 +115,6 @@ exec_plans :: proc(sql: ^Streamql, limit: int = bits.I32_MAX) -> Result {
 
 		if sql.verbosity > Verbose.Basic {
 			fmt.printf("EXEC: %s\n", sql.queries[i].preview_text)
-		}
-
-		if res = query_prepare(sql, sql.queries[i]); res == .Error {
-			break
-		}
-
-		if .Thread in sql.config {
-			res = query_exec_thread(sql, sql.queries[i])
-		} else {
-			res = query_exec(sql, sql.queries[i])
 		}
 
 		if res == .Error {

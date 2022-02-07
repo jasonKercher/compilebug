@@ -26,8 +26,6 @@ Source :: struct {
 	data: Source_Data,
 	alias: string,
 	schema: Schema,
-	join_data: ^Hash_Join,
-	join_type: Join_Type,
 	props: bit_set[Source_Props],
 }
 
@@ -55,12 +53,10 @@ source_reset :: proc(src: ^Source, has_executed: bool) -> Result {
 		reader := &src.schema.data.(Reader)
 		reader_reopen(reader) or_return
 		reader.reset__(reader) or_return
-		hash_join_reset(src.join_data)
 	} else if has_executed {
 		reader := &src.schema.data.(Reader)
 		//reader_reopen(reader) or_return
 		reader.reset__(reader) or_return
-		hash_join_reset(src.join_data)
 	}
 	return .Ok
 }
