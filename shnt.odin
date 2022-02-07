@@ -1,6 +1,5 @@
 package streamql
 
-import "bigraph"
 import "fifo"
 
 main :: proc()
@@ -12,26 +11,24 @@ main :: proc()
 Plan :: struct {
 	execute_vector: []Process,
 	root_fifos: []fifo.Fifo(^Record),
-	proc_graph: bigraph.Graph(Process),
-	op_true: ^bigraph.Node(Process),
-	op_false: ^bigraph.Node(Process),
-	curr: ^bigraph.Node(Process),
 	_root_data: []Record,
 }
 
 _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
-	graph_size := len(q.plan.proc_graph.nodes)
 	union_pipes := 0
+	graph_size := 0
 	proc_count := graph_size + union_pipes
 	fifo_base_size := 0
 
 	root_fifo_vec := make([dynamic]fifo.Fifo(^Record))
 
 	pipe_count := 0
+
+	process: Process
 	
-	for node in &q.plan.proc_graph.nodes {
-		process_activate(&node.data, &root_fifo_vec, &pipe_count, fifo_base_size)
-	}
+	//for node in &q.plan.proc_graph.nodes {
+		process_activate(&process, &root_fifo_vec, &pipe_count, fifo_base_size)
+	//}
 
 	if len(root_fifo_vec) == 0 {
 		return
@@ -44,34 +41,13 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	
 	q.plan._root_data = make([]Record, root_size)
 	q.plan.root_fifos = root_fifo_vec[:]
-
-
-	for node in &q.plan.proc_graph.nodes {
-		node.data.root_fifo_ref = &q.plan.root_fifos
-	}
-
 }
 
-_build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, is_union: bool = false) -> Result {
+_build :: proc(sql: ^Streamql, q: ^Query, is_union: bool = false) -> Result {
 	for subq in &q.subquery_exprs {
 		_build(sql, subq) or_return
 	}
 
-	bigraph.set_roots(&q.plan.proc_graph)
-	bigraph.set_roots(&q.plan.proc_graph)
-
-	if len(q.plan.proc_graph.nodes) == 0 {
-		if entry != nil {
-			entry.data.state += {.Is_Const}
-		}
-		return .Ok
-	}
-
-	for subq in &q.subquery_exprs {
-		bigraph.consume(&q.plan.proc_graph, &subq.plan.proc_graph)
-	}
-
-	bigraph.set_roots(&q.plan.proc_graph)
 	_activate_procs(sql, q)
 
 	return .Ok
@@ -102,7 +78,6 @@ Process_Data :: union {
 Process_Call :: proc(process: ^Process) -> Result
 
 Process_Unions :: struct #raw_union {
-	n: []^bigraph.Node(Process),
 	p: []^Process,
 }
 
@@ -138,11 +113,11 @@ process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^
 	if select, is_select := process.data.(^Select); is_select {
 	}
 
-	for node in process.union_data.n {
-		pipe_count^ += 1
-		node.data.output[0] = fifo.new_fifo(^Record, u16(base_size))
-		node.data.output[0].input_count = 1
-	}
+	//for node in process.union_data.n {
+	//	pipe_count^ += 1
+	//	node.data.output[0] = fifo.new_fifo(^Record, u16(base_size))
+	//	node.data.output[0].input_count = 1
+	//}
 
 	if process.input[0] == nil {
 		pipe_count^ += 1
