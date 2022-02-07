@@ -25,7 +25,6 @@ Process_State :: enum u8 {
 }
 
 Process_Data :: union {
-	^Source,
 	^Select,
 }
 

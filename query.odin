@@ -10,7 +10,6 @@ import "core:math/bits"
 Query :: struct {
 	operation: Select,
 	plan: Plan,
-	sources: [dynamic]Source,
 	unions: [dynamic]^Query,
 	subquery_exprs: [dynamic]^Query,
 	var_source_vars: [dynamic]i32,

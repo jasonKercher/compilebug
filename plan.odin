@@ -103,9 +103,6 @@ _preempt :: proc(p: ^Plan) {
 
 @(private = "file")
 _from :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if len(q.sources) == 0 {
-		return .Ok
-	}
 	return .Ok
 }
 
@@ -389,9 +386,6 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 	}
 
 	bigraph.set_roots(&q.plan.proc_graph)
-	if len(q.sources) == 0 {
-		_mark_roots_const(&q.plan.proc_graph.roots, q.plan.id)
-	}
 
 	if _all_roots_are_const(&q.plan.proc_graph.roots) {
 		q.plan.state += {.Is_Const}

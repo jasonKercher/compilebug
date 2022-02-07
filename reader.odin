@@ -37,11 +37,6 @@ reader_reopen :: proc(reader: ^Reader) -> Result {
 	return not_implemented()
 }
 
-reader_assign :: proc(sql: ^Streamql, src: ^Source) -> Result {
-	reader := &src.schema.data.(Reader)
-	return .Ok
-}
-
 reader_start_file_backed_input :: proc(r: ^Reader) {
 	not_implemented()
 }
