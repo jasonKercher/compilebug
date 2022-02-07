@@ -50,21 +50,6 @@ Plan :: struct {
 	id: u8,
 }
 
-make_plan :: proc() -> Plan {
-	p := Plan {
-		proc_graph = bigraph.make_graph(Process),
-		op_true = bigraph.new_node(make_process(nil, "OP_TRUE")),
-		op_false = bigraph.new_node(make_process(nil, "OP_FALSE")),
-		curr = bigraph.new_node(make_process(nil, "START")),
-	}
-	p.curr.data.state += {.Is_Passive}
-
-	bigraph.add_node(&p.proc_graph, p.curr)
-	bigraph.add_node(&p.proc_graph, p.op_true)
-	bigraph.add_node(&p.proc_graph, p.op_false)
-	return p
-}
-
 destroy_plan :: proc(p: ^Plan) {
 	bigraph.destroy(&p.proc_graph)
 }
@@ -119,26 +104,6 @@ _preempt :: proc(p: ^Plan) {
 	for f in &p.root_fifos {
 		fifo.set_full(&f)
 	}
-}
-
-@(private = "file")
-_from :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	return .Ok
-}
-
-@(private = "file")
-_where :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	return .Ok
-}
-
-@(private = "file")
-_group :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	return not_implemented()
-}
-
-@(private = "file")
-_having :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	return .Ok
 }
 
 @(private = "file")
@@ -374,12 +339,6 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 		_build(sql, subq) or_return
 	}
 
-	q.plan = make_plan()
-
-	_from(sql, q) or_return
-	_where(sql, q) or_return
-	_group(sql, q) or_return
-	_having(sql, q) or_return
 	_operation(sql, q, entry, is_union) or_return
 
 	//_print(&q.plan)
