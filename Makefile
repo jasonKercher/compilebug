@@ -8,7 +8,7 @@ vet: $(SRC)
 	odin build ./ -out:streamql -debug -opt:0 -vet
 
 debug: $(SRC)
-	odin build ./ -out:streamql -opt:0
+	odin build ./ -out:streamql -opt:0 -thread-count:1 -debug
 
 release: $(SRC)
 	odin build ./ -out:streamql -o:speed

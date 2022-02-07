@@ -1,14 +1,8 @@
 //+private
 package streamql
 
-import "fastrecs"
-
-Record_Data :: union {
-	fastrecs.Record,
-}
 
 Record :: struct {
-	data: Record_Data,
 	fields: []string,
 	offset: i64,
 	idx: i64,
@@ -35,9 +29,5 @@ record_get :: proc(rec: ^Record, src_idx: u8) -> ^Record {
 }
 
 record_get_line :: proc(rec: ^Record) -> string {
-	switch v in rec.data {
-	case fastrecs.Record:
-		return fastrecs.get_line_from_record(v)
-	}
-	unreachable()
+	return ""
 }

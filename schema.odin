@@ -5,7 +5,6 @@ import "core:path/filepath"
 import "core:math/bits"
 import "core:strings"
 import "core:fmt"
-import "fastrecs"
 import "core:os"
 import "bytemap"
 import "util"
@@ -144,14 +143,6 @@ schema_set_rec_term :: proc(s: ^Schema, rec_term: string) {
 
 schema_assign_header :: proc(src: ^Source, rec: ^Record, src_idx: int) {
 	schema := &src.schema
-	fr_rec := rec.data.(fastrecs.Record)
-	for f in fr_rec.fields {
-		new_item := Schema_Item {
-			name = strings.clone(f),
-			loc = i32(len(src.schema.layout)),
-		}
-		append(&src.schema.layout, new_item)
-	}
 	schema_preflight(schema)
 }
 
@@ -442,32 +433,6 @@ _resolve_source :: proc(sql: ^Streamql, q: ^Query, src: ^Source, src_idx: int) -
 	}
 
 	rec: Record
-	rec.data = fastrecs.Record{}
-	r.max_field_idx = bits.I32_MAX
-	r.get_record__(r, &rec)
-	r.max_field_idx = 0
-
-	if .Is_Stdin not_in src.props {
-		r.reset__(r)
-	}
-
-	/* if we've made it this far, we want to try
-	 * and determine schema by reading the top
-	 * row of the file and assume a delimited
-	 * list of field names.
-	 */
-	if .Is_Default in src.schema.props {
-		if .Is_Preresolved not_in src.schema.props {
-			schema_assign_header(src, &rec, src_idx)
-		}
-	} else {
-		new_size := 1 if len(rec.fields) == 0 else len(rec.fields)
-		for i := len(src.schema.layout); i >= new_size; i -= 1 {
-			item := pop(&src.schema.layout)
-			delete(item.name)
-		}
-	}
-
 	schema_preflight(&src.schema)
 
 	if .Is_Default in src.schema.props || .Is_Stdin in src.props {

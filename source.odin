@@ -78,7 +78,6 @@ source_resolve_schema :: proc(sql: ^Streamql, src: ^Source) -> Result {
 	delim: string
 	#partial switch r.type {
 	case .Delimited:
-		delim = r.data.(fastrecs.Reader)._delim
 		src.schema.io = .Delimited
 	case .Subquery:
 		subquery := src.data.(^Query)
