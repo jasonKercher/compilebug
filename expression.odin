@@ -36,14 +36,10 @@ Expression_Data :: union {
 	Expr_Subquery,
 	Expr_Variable,
 	Expr_Null,
-	Expr_Case,
-	Expr_Function,
-	Expr_Aggregate,
 }
 
 Expression :: struct {
 	buf: strings.Builder,
-	fn_bak: ^Expr_Function,
 	alias: string,
 	table_name: string,
 	data: Expression_Data,
@@ -104,27 +100,10 @@ make_expression_name :: proc(name, table_name: string) -> Expression {
 	return expr
 }
 
-make_expression_agg :: proc(agg: Expr_Aggregate) -> Expression {
-	return Expression {
-		data = agg,
-	}
-}
-
-make_expression_fn :: proc(fn: Expr_Function) -> Expression {
-	return Expression {
-		data = fn,
-	}
-}
 
 make_expression_null :: proc(null: Expr_Null) -> Expression {
 	return Expression {
 		data = null,
-	}
-}
-
-make_expression_case :: proc(c: Expr_Case) -> Expression {
-	return Expression {
-		data = c,
 	}
 }
 
@@ -152,19 +131,14 @@ make_expression :: proc{
 	make_expression_const_s,
 	make_expression_subquery,
 	make_expression_name,
-	make_expression_agg,
-	make_expression_fn,
 	make_expression_null,
 	make_expression_asterisk,
-	make_expression_case,
 	make_expression_var,
 	make_expression_ref,
 }
 
 destroy_expression :: proc(expr: ^Expression) {
 	strings.destroy_builder(&expr.buf)
-	destroy_function(expr.fn_bak)
-	free(expr.fn_bak)
 }
 
 expression_cat_description :: proc(expr: ^Expression, b: ^strings.Builder) {
@@ -200,25 +174,6 @@ expression_cat_description :: proc(expr: ^Expression, b: ^strings.Builder) {
 		strings.write_byte(b, '>')
 	case Expr_Null:
 		strings.write_string(b, "NULL")
-	case Expr_Case:
-		strings.write_string(b, "[case expr]")
-	case Expr_Function:
-		fn := expr.data.(Expr_Function)
-		fn_names := reflect.enum_field_names(typeid_of(Function_Type))
-		strings.write_string(b, fn_names[fn.type])
-		strings.write_byte(b, '(')
-
-		first := true
-		for e in &fn.args {
-			if !first {
-				strings.write_byte(b, ',')
-			}
-			first = false
-			expression_cat_description(&e, b)
-		}
-		strings.write_byte(b, ')')
-	case Expr_Aggregate:
-		strings.write_string(b, "[aggregate]")
 	}
 }
 
@@ -227,7 +182,6 @@ expression_link :: proc(col: ^Expr_Column_Name, item: Schema_Item, src_idx: int,
 	col.item.width = item.width
 	col.src_idx = i32(src_idx)
 
-	/* TODO: Aggregate linked expression */
 
 	r := &src.schema.data.(Reader)
 	if src != nil && item.loc > r.max_field_idx {

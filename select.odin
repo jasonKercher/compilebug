@@ -119,10 +119,6 @@ select_verify_must_run :: proc(sel: ^Select) {
 	if .Must_Run_Once in sel.schema.props {
 		sel.schema.props -= {.Must_Run_Once}
 		for expr in sel.expressions {
-			if _, is_agg := expr.data.(Expr_Aggregate); is_agg {
-				sel.schema.props += {.Must_Run_Once}
-				break
-			}
 		}
 	}
 }

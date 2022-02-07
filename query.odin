@@ -13,8 +13,6 @@ Query :: struct {
 	sources: [dynamic]Source,
 	groupby: ^Group,
 	distinct_: ^Group,
-	where_: ^Logic_Group,
-	having: ^Logic_Group,
 	orderby: ^Order,
 	unions: [dynamic]^Query,
 	subquery_exprs: [dynamic]^Query,
@@ -22,7 +20,6 @@ Query :: struct {
 	var_sources: [dynamic]i32,
 	var_expr_vars: [dynamic]i32,
 	var_exprs: [dynamic]^Expression,
-	joinable_logic: [dynamic]^Logic,
 	into_table_name: string,
 	preview_text: string,
 	state: ^Listener_State,
@@ -175,10 +172,6 @@ query_add_subquery_source :: proc(q: ^Query, subquery: ^Query) -> Result {
 }
 
 query_distribute_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expression, Result) {
-	if len(q.state.f_stack) > 0 {
-		fn_expr := q.state.f_stack[len(q.state.f_stack) - 1]
-		return function_add_expression(&fn_expr.data.(Expr_Function), expr), .Ok
-	}
 	#partial switch q.state.mode {
 	case .Select_List:
 		return nil, .Ok
@@ -190,8 +183,6 @@ query_distribute_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expressio
 		return nil, .Error
 	case .In:
 		fallthrough
-	case .Logic:
-		return _add_logic_expression(q, expr)
 	case .Groupby:
 		return group_add_expression(q.groupby, expr), .Ok
 	case .Orderby:
@@ -206,40 +197,6 @@ query_distribute_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expressio
 
 	return nil, .Error
 }
-
-query_new_logic_item :: proc(q: ^Query, type: Logic_Group_Type) -> ^Logic_Group {
-	lg : ^Logic_Group
-	l_stack := &q.state.l_stack
-
-	parent := l_stack[len(l_stack) - 1]
-	if parent.type == nil {
-		lg = parent
-		lg.type = type
-	} else if parent.items[0] == nil {
-		lg = new_logic_group(type)
-		parent.items[0] = lg
-	} else {
-		lg = new_logic_group(type)
-		parent.items[1] = lg
-	}
-
-	return lg
-}
-
-@(private = "file")
-_add_logic_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expression, Result) {
-	if _, ok := expr.data.(Expr_Aggregate); ok && q.state.l_stack[0] != q.having {
-		fmt.fprintln(os.stderr, "cannot have aggregate logic outside of HAVING")
-		return nil, .Error
-	}
-
-	lg := q.state.l_stack[len(q.state.l_stack) - 1]
-	if lg.condition == nil {
-		lg.condition = new_logic()
-	}
-	return logic_add_expression(lg.condition, expr), .Ok
-}
-
 @(private = "file")
 _check_wait_list :: proc(wait_list: []^Process) -> bool {
 	not_implemented()

@@ -121,21 +121,10 @@ _make_join_proc :: proc(p: ^Plan, type: Join_Type, algo_str: string) -> Process 
 }
 
 @(private = "file")
-_subquery_inlist :: proc(p: ^Plan, lg: ^Logic_Group, logic_proc: ^Process) -> Result {
-	return not_implemented()
-}
-
-@(private = "file")
 _check_for_special_expr :: proc(p: ^Plan, process: ^Process, expr: ^Expression) {
 	#partial switch v in &expr.data {
 	case Expr_Subquery:
 		process_add_to_wait_list(process, &v.plan.op_true.data)
-	case Expr_Case:
-		not_implemented()
-	case Expr_Aggregate:
-		_check_for_special_exprs(p, process, &v.args)
-	case Expr_Function:
-		_check_for_special_exprs(p, process, &v.args)
 	}
 }
 
@@ -151,71 +140,6 @@ _check_for_special_exprs :: proc(p: ^Plan, process: ^Process, exprs: ^[dynamic]E
 }
 
 _check_for_special :: proc{_check_for_special_expr, _check_for_special_exprs}
-
-@(private = "file")
-_logic_to_process :: proc(p: ^Plan, logic_proc: ^Process, lg: ^Logic_Group, sb: ^strings.Builder) -> Result {
-	switch lg.type {
-	case .And:
-		strings.write_string(sb, "AND(")
-	case .Or:
-		strings.write_string(sb, "OR(")
-	case .Not:
-		strings.write_string(sb, "NOT(")
-	case .Predicate_Negated:
-		strings.write_string(sb, "NOT ")
-		fallthrough
-	case .Predicate:
-		if int(lg.condition.comp_type) >= int(Comparison.Sub_In) {
-			_subquery_inlist(p, lg, logic_proc) or_return
-		}
-		_check_for_special(p, logic_proc, &lg.condition.exprs[0])
-		_check_for_special(p, logic_proc, &lg.condition.exprs[1])
-		logic_assign_process(lg.condition, logic_proc) or_return
-	}
-
-	if lg.items[0] != nil {
-		_logic_to_process(p, logic_proc, lg.items[0], sb) or_return
-	}
-	if lg.items[1] != nil {
-		_logic_to_process(p, logic_proc, lg.items[1], sb) or_return
-	}
-
-	strings.write_byte(sb, ')')
-	return .Ok
-}
-
-@(private = "file")
-_insert_logic_proc :: proc(p: ^Plan, lg: ^Logic_Group, is_hash_join: bool = false) -> (ptr: ^Process, res: Result) {
-	logic_proc := make_process(p, "")
-	logic_proc.action__ = sql_logic
-	logic_proc.data = lg
-
-	sb := strings.make_builder()
-	_logic_to_process(p, &logic_proc, lg, &sb) or_return
-	logic_proc.msg = strings.to_string(sb)
-
-	logic_node := bigraph.add(&p.proc_graph, logic_proc)
-	
-	if is_hash_join {
-		p.curr.out[1] = logic_node
-		if logic_group_get_condition_count(lg) == 1 {
-			logic_node.data.state += {.Is_Passive}
-		}
-	} else {
-		p.curr.out[0] = logic_node
-	}
-
-	logic_node.out[0] = p.op_false
-
-	logic_true_proc := make_process(nil, "logic true")
-	logic_true_proc.state += {.Is_Passive}
-	logic_true_node := bigraph.add(&p.proc_graph, logic_true_proc)
-	logic_node.out[1] = logic_true_node
-	p.curr = logic_true_node
-
-	ptr = &logic_node.data
-	return
-}
 
 @(private = "file")
 _from :: proc(sql: ^Streamql, q: ^Query) -> Result {
@@ -317,23 +241,13 @@ _from :: proc(sql: ^Streamql, q: ^Query) -> Result {
 		q.plan.curr.out[0] = join_node
 		q.plan.curr = join_node
 
-		if src.join_logic != nil {
-			logic_proc := _insert_logic_proc(&q.plan, src.join_logic, is_hash_join) or_return
-			if src.join_type == .Left {
-				logic_proc.action__ = sql_left_join_logic
-			}
-		}
 	}
 	return .Ok
 }
 
 @(private = "file")
 _where :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if q.where_ == nil {
-		return .Ok
-	}
-	_, res := _insert_logic_proc(&q.plan, q.where_)
-	return res
+	return .Ok
 }
 
 @(private = "file")
@@ -346,11 +260,7 @@ _group :: proc(sql: ^Streamql, q: ^Query) -> Result {
 
 @(private = "file")
 _having :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if q.having == nil {
-		return .Ok
-	}
-	_, res := _insert_logic_proc(&q.plan, q.having)
-	return res
+	return .Ok
 }
 
 @(private = "file")
