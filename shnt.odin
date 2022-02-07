@@ -6,13 +6,7 @@ import "fifo"
 main :: proc()
 {
 	sql: Streamql
-	plan_build(&sql)
-}
-
-Plan_State :: enum {
-	Has_Stepped,
-	Is_Complete,
-	Is_Const,
+	_build(&sql, sql.queries[0])
 }
 
 Plan :: struct {
@@ -23,18 +17,6 @@ Plan :: struct {
 	op_false: ^bigraph.Node(Process),
 	curr: ^bigraph.Node(Process),
 	_root_data: []Record,
-	plan_str: string,
-	rows_affected: u64,
-	state: bit_set[Plan_State],
-	src_count: u8,
-	id: u8,
-}
-
-plan_build :: proc(sql: ^Streamql) -> Result {
-	for q in &sql.queries {
-		_build(sql, q) or_return
-	}
-	return .Ok
 }
 
 _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
@@ -75,12 +57,8 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 		_build(sql, subq) or_return
 	}
 
-
-	//_print(&q.plan)
-
 	bigraph.set_roots(&q.plan.proc_graph)
 	bigraph.set_roots(&q.plan.proc_graph)
-
 
 	if len(q.plan.proc_graph.nodes) == 0 {
 		if entry != nil {
@@ -94,9 +72,6 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 	}
 
 	bigraph.set_roots(&q.plan.proc_graph)
-
-
-	/* Only non-subqueries beyond this point */
 	_activate_procs(sql, q)
 
 	return .Ok
@@ -124,7 +99,7 @@ Process_Data :: union {
 	^Select,
 }
 
-Process_Call :: proc(process: ^Process) -> Process_Result
+Process_Call :: proc(process: ^Process) -> Result
 
 Process_Unions :: struct #raw_union {
 	n: []^bigraph.Node(Process),
@@ -161,9 +136,6 @@ process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^
 	}
 
 	if select, is_select := process.data.(^Select); is_select {
-		if .Is_Const in process.state {
-			select.schema.props += {.Is_Const}
-		}
 	}
 
 	for node in process.union_data.n {
@@ -221,55 +193,14 @@ Record :: struct {
 	ref: ^Record,
 }
 
-Schema_Props :: enum {
-	Is_Var,
-	Is_Const,
-	Is_Default,
-	Is_Preresolved,
-	Delim_Set,
-	Must_Run_Once,
-}
-
-Schema :: struct {
-	props: bit_set[Schema_Props],
-}
-
-
-Select_Call :: proc(sel: ^Select, recs: ^Record) -> Process_Result
 
 Select :: struct {
-	select__: Select_Call,
-	schema: Schema,
 	select_list: [dynamic]^Select,
 	top_count: i64,
 	offset: i64,
 	row_num: i64,
 	rows_affected: i64,
 	select_idx: i32,
-}
-
-_select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	sel.row_num += 1
-
-
-	if recs == nil {
-		return .Ok
-	}
-
-	return .Ok
-}
-
-Process_Result :: enum {
-	Ok,
-	Error,
-	Complete,
-	Running,
-	Waiting_In0,
-	Waiting_In1,
-	Waiting_In_Either,
-	Waiting_In_Both,
-	Waiting_Out0,
-	Waiting_Out1,
 }
 
 sqlprocess_recycle :: proc(_p: ^Process, recs: ^Record) {
@@ -287,95 +218,11 @@ sqlprocess_recycle :: proc(_p: ^Process, recs: ^Record) {
 		recs = next_rec
 	}
 }
-
-sql_select :: proc(_p: ^Process) -> Process_Result {
-	main_select := _p.data.(^Select)
-	current_select := main_select.select_list[main_select.select_idx]
-
-	in_ := _p.input[0]
-	out := _p.output[0]
-
-	if out != nil && !out.is_open {
-		for union_proc in _p.union_data.p {
-			fifo.set_open(union_proc.output[0], false)
-		}
-		return .Complete
-	}
-
-	if .Wait_In0 not_in _p.state {
-		/* subquery reads expect union schema to
-		 * be "in sync" with the subquery select's
-		 * current schema
-		 */
-		if out != nil && !fifo.is_empty(out) {
-			return .Running
-		}
-
-
-		return .Complete
-	}
-
-	if fifo.is_empty(in_) {
-		if .Wait_In0 in _p.state && in_.is_open {
-			return .Waiting_In0
-		}
-		_p.state -= {.Wait_In0}
-	}
-
-	if out != nil && fifo.receivable(out) == 0 {
-		return .Waiting_Out0
-	}
-
-	////
-
-	res := Process_Result.Waiting_In0
-
-	/* TODO: DELETE ME */
-
-	iters: u16 = 0
-	for recs := fifo.begin(in_); recs != fifo.end(in_); {
-		iters += 1 
-		if main_select.rows_affected >= current_select.top_count {
-			res = .Running
-			break
-		}
-
-		main_select.select__(main_select, recs) or_return
-
-		_p.rows_affected += 1
-		main_select.rows_affected += 1
-
-		if out != nil {
-			fifo.add(out, recs)
-			sqlprocess_recycle(_p, recs)
-		}
-
-		recs = fifo.iter(in_)
-
-		if out != nil && fifo.receivable(out) == 0 {
-			res = .Waiting_Out0
-			break
-		}
-	}
-	fifo.update(in_)
-
-	if main_select.rows_affected >= current_select.top_count {
-		_p.state -= {.Wait_In0}
-		res = .Running
-	}
-	return res
-}
-
 Result :: enum u8 {
 	Ok,
-	Running,
-	Error,
-	Eof,
-	Null, // refering to NULL in SQL
 }
 
 Streamql :: struct {
-	schema_paths: [dynamic]string,
 	queries: [dynamic]^Query,
 }
 
