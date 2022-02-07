@@ -111,9 +111,6 @@ sql_select :: proc(_p: ^Process) -> Process_Result {
 			return .Error
 		}
 
-		if writer_close(&main_select.schema.data.(Writer)) == .Error {
-			return .Error
-		}
 
 		return .Complete
 	}

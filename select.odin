@@ -63,7 +63,6 @@ select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 
 	process = &q.plan.op_false.data
 	process.state += {.Is_Passive}
-	writer := &sel.schema.data.(Writer)
 }
 
 select_next_union :: proc(sel: ^Select) -> bool {
@@ -79,7 +78,6 @@ select_verify_must_run :: proc(sel: ^Select) {
 
 _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 	sel.row_num += 1
-	w := &sel.schema.data.(Writer)
 
 
 	if recs == nil {

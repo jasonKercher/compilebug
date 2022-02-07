@@ -23,13 +23,7 @@ Schema_Item :: struct {
 	width: i32,
 }
 
-Schema_Data :: union {
-	Reader,
-	Writer,
-}
-
 Schema :: struct {
-	data: Schema_Data,
 	layout: [dynamic]Schema_Item,
 	name: string,
 	schema_path: string,
