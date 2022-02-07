@@ -28,7 +28,6 @@ main :: proc()
 	destroy(&sql)
 }
 
-//+private
 Plan_State :: enum {
 	Has_Stepped,
 	Is_Complete,
@@ -50,33 +49,6 @@ Plan :: struct {
 	id: u8,
 }
 
-destroy_plan :: proc(p: ^Plan) {
-	bigraph.destroy(&p.proc_graph)
-}
-
-plan_reset :: proc(p: ^Plan) -> Result {
-	if .Is_Complete not_in p.state {
-		return .Ok
-	}
-
-	p.state -= {.Is_Complete}
-	p.rows_affected = 0
-
-	for node in &p.proc_graph.nodes {
-		process_enable(&node.data)
-	}
-
-	_preempt(p)
-	return .Ok
-}
-
-plan_print :: proc(sql: ^Streamql) {
-	for q, i in &sql.queries {
-		fmt.eprintf("\nQUERY %d\n", i + 1)
-		_print(&q.plan)
-	}
-}
-
 plan_build :: proc(sql: ^Streamql) -> Result {
 	for q in &sql.queries {
 		_build(sql, q) or_return
@@ -84,167 +56,9 @@ plan_build :: proc(sql: ^Streamql) -> Result {
 	return .Ok
 }
 
-@(private = "file")
-_preempt :: proc(p: ^Plan) {
-	if len(p._root_data) == 0 {
-		return
-	}
-
-	buf_idx := -1
-	for rec, i in &p._root_data {
-		rec.next = nil
-		rec.root_fifo_idx = u8(i % len(p.root_fifos))
-		if rec.root_fifo_idx == 0 {
-			buf_idx += 1
-		}
-
-		p.root_fifos[rec.root_fifo_idx].buf[buf_idx] = &rec
-	}
-
-	for f in &p.root_fifos {
-		fifo.set_full(&f)
-	}
-}
-
-@(private = "file")
-_operation :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process), is_union: bool = false) -> Result {
-	prev := q.plan.curr
-	prev.out[0] = q.plan.op_true
-	q.plan.curr = q.plan.op_true
-
-	/* Current no longer matters. After operation, we
-	 * do order where current DOES matter... BUT
-	 * if we are in a union we should not encounter
-	 * ORDER BY...
-	 */
-	if is_union {
-		q.plan.op_false.data.state += {.Is_Passive}
-		if .Is_Passive in prev.data.state {
-			q.plan.curr = prev
-			return .Ok
-		}
-	}
-
-	if entry != nil {
-		q.plan.op_true.out[0] = entry
-	}
-	return .Ok
-}
-
-@(private = "file")
-_union :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	if len(q.unions) == 0 {
-		return .Ok
-	}
-	return not_implemented()
-}
-
-@(private = "file")
-_order :: proc(sql: ^Streamql, q: ^Query) -> Result {
-	return not_implemented()
-}
-
-/* In an effort to make building of the process graph easier
- * passive nodes are used as a sort of link between the steps.
- * Here, we *attempt* to remove the passive nodes and bridge
- * the gaps between.
- */
-@(private = "file")
-_clear_passive :: proc(p: ^Plan) {
-	p := p // TODO: remove
-	for n in &p.proc_graph.nodes {
-		for n.out[0] != nil {
-			if .Is_Passive not_in n.out[0].data.state {
-				break
-			}
-			n.out[0] = n.out[0].out[0]
-		}
-		for n.out[1] != nil {
-			if .Is_Passive not_in n.out[1].data.state {
-				break
-			}
-			/* This has to be wrong... but it works... */
-			if n.out[1].out[1] == nil {
-				n.out[1] = n.out[1].out[1]
-			} else {
-				n.out[1] = n.out[1].out[0]
-			}
-		}
-	}
-
-	nodes := &p.proc_graph.nodes
-
-	for i := 0; i < len(nodes); /* no advance */ {
-		if .Is_Passive in nodes[i].data.state {
-			process_destroy(&nodes[i].data)
-			bigraph.remove(&p.proc_graph, nodes[i])
-		} else {
-			i += 1
-		}
-	}
-}
-
-@(private = "file")
-_stranded_roots_for_delete :: proc(p: ^Plan) {
-	for root in &p.proc_graph.roots {
-		if root == p.op_false || root == p.op_true {
-			continue
-		}
-
-		if root.out[0] == nil && root.out[1] == nil {
-			root.data.state += {.Is_Passive}
-			p.op_false.data.state -= {.Wait_In0}
-			p.op_false.data.state += {.In0_Always_Dead}
-		}
-	}
-
-	_clear_passive(p)
-	bigraph.set_roots(&p.proc_graph)
-}
-
-@(private = "file")
-_mark_roots_const :: proc(roots: ^[dynamic]^bigraph.Node(Process), id: u8) {
-	for root in roots {
-		pr := &root.data
-		if pr.plan_id != id {
-			continue
-		}
-		if pr.action__  != sql_read {
-			if .Root_Fifo0 not_in pr.state && .Root_Fifo1 not_in pr.state {
-				pr.state += {.Root_Fifo0}
-			}
-			pr.state += {.Is_Const}
-		}
-	}
-}
-
-@(private = "file")
-_all_roots_are_const :: proc(roots: ^[dynamic]^bigraph.Node(Process)) -> bool {
-	for root in roots {
-		if .Is_Const not_in root.data.state {
-			return false
-		}
-	}
-	return true
-}
-
-@(private = "file")
-_search_and_mark_const_selects :: proc(q: ^Query) -> bool {
-	return false
-}
-
-_get_union_pipe_count :: proc(nodes: ^[dynamic]^bigraph.Node(Process)) -> int {
-	total := 0
-	for node in nodes {
-		total += len(node.data.union_data.n)
-	}
-	return total
-}
-
-@(private = "file")
 _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	graph_size := len(q.plan.proc_graph.nodes)
-	union_pipes := _get_union_pipe_count(&q.plan.proc_graph.nodes)
+	union_pipes := 0
 	proc_count := graph_size + union_pipes
 	fifo_base_size := proc_count * int(sql.pipe_factor)
 
@@ -268,7 +82,6 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	q.plan._root_data = make([]Record, root_size)
 	q.plan.root_fifos = root_fifo_vec[:]
 
-	_preempt(&q.plan)
 
 	for node in &q.plan.proc_graph.nodes {
 		node.data.root_fifo_ref = &q.plan.root_fifos
@@ -279,32 +92,6 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	}
 }
 
-@(private = "file")
-_make_pipes :: proc(p: ^Plan) {
-	for n in &p.proc_graph.nodes {
-		if n.out[0] != nil {
-			proc0 := n.out[0].data
-			if .Is_Dual_Link in n.out[0].data.state {
-				n.data.output[0] = proc0.input[0]
-				n.data.output[1] = proc0.input[1]
-				continue
-			}
-			n.data.output[0] = .Is_Secondary in n.data.state ? proc0.output[1] : proc0.input[0]
-		}
-
-		if n.out[1] != nil {
-			proc1 := n.out[1].data
-			if .Is_Dual_Link in n.out[0].data.state {
-				n.data.output[0] = proc1.input[0]
-				n.data.output[1] = proc1.input[1]
-				continue
-			}
-			n.data.output[1] = .Is_Secondary in n.data.state ? proc1.output[1] : proc1.input[0]
-		}
-	}
-}
-
-@(private = "file")
 _update_pipes :: proc(g: ^bigraph.Graph(Process)) {
 	for bigraph.traverse(g) != nil {}
 
@@ -319,7 +106,6 @@ _update_pipes :: proc(g: ^bigraph.Graph(Process)) {
 	bigraph.reset(g)
 }
 
-@(private = "file")
 _calculate_execution_order :: proc(p: ^Plan) {
 	p.execute_vector = make([]Process, len(p.proc_graph.nodes))
 
@@ -333,24 +119,17 @@ _calculate_execution_order :: proc(p: ^Plan) {
 
 }
 
-@(private = "file")
 _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, is_union: bool = false) -> Result {
 	for subq in &q.subquery_exprs {
 		_build(sql, subq) or_return
 	}
 
-	_operation(sql, q, entry, is_union) or_return
 
 	//_print(&q.plan)
 
-	_clear_passive(&q.plan)
 	bigraph.set_roots(&q.plan.proc_graph)
-	_union(sql, q) or_return
-	_order(sql, q) or_return
-	_clear_passive(&q.plan)
 	bigraph.set_roots(&q.plan.proc_graph)
 
-	_stranded_roots_for_delete(&q.plan)
 
 	if len(q.plan.proc_graph.nodes) == 0 {
 		if entry != nil {
@@ -361,15 +140,10 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 
 	for subq in &q.subquery_exprs {
 		bigraph.consume(&q.plan.proc_graph, &subq.plan.proc_graph)
-		//destroy_plan(&subq.plan)
 	}
 
 	bigraph.set_roots(&q.plan.proc_graph)
 
-	if _all_roots_are_const(&q.plan.proc_graph.roots) {
-		q.plan.state += {.Is_Const}
-	}
-	_search_and_mark_const_selects(q)
 
 	/* Only non-subqueries beyond this point */
 	if q.sub_id != 0 {
@@ -377,14 +151,12 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 	}
 
 	_activate_procs(sql, q)
-	_make_pipes(&q.plan)
 	_update_pipes(&q.plan.proc_graph)
 	_calculate_execution_order(&q.plan)
 
 	return .Ok
 }
 
-@(private = "file")
 _print_col_sep :: proc(w: ^bufio.Writer, n: int) {
 	for n := n; n > 0; n -= 1 {
 		bufio.writer_write_byte(w, ' ')
@@ -392,7 +164,6 @@ _print_col_sep :: proc(w: ^bufio.Writer, n: int) {
 	bufio.writer_write_byte(w, '|')
 }
 
-@(private = "file")
 _print :: proc(p: ^Plan) {
 	io_w, ok := io.to_writer(os.stream_from_handle(os.stderr))
 	if !ok {
@@ -451,7 +222,6 @@ _print :: proc(p: ^Plan) {
 	bufio.writer_flush(&w)
 	bufio.writer_destroy(&w)
 }
-//+private
 
 Process_State :: enum u8 {
 	Is_Const,
@@ -590,7 +360,6 @@ process_disable :: proc(process: ^Process) {
 process_add_to_wait_list :: proc(waiter: ^Process, waitee: ^Process) {
 	not_implemented()
 }
-//+private
 
 Query :: struct {
 	operation: Select,
@@ -612,7 +381,6 @@ Query :: struct {
 	query_total: i16,
 }
 
-//+private
 
 
 Record :: struct {
@@ -644,7 +412,6 @@ record_get :: proc(rec: ^Record, src_idx: u8) -> ^Record {
 record_get_line :: proc(rec: ^Record) -> string {
 	return ""
 }
-//+private
 
 Schema_Props :: enum {
 	Is_Var,
@@ -669,7 +436,6 @@ Schema :: struct {
 	rec_term: string,
 	props: bit_set[Schema_Props],
 }
-//+private
 
 
 Select_Call :: proc(sel: ^Select, recs: ^Record) -> Process_Result
@@ -692,27 +458,6 @@ make_select :: proc() -> Select {
 		select_idx = -1,
 	}
 }
-
-select_reset :: proc(s: ^Select) -> Result {
-	s.offset = 0
-	s.row_num = 0
-	s.rows_affected = 0
-
-	if len(s.select_list) != 0 {
-		s.select_idx = 0
-	}
-
-	return .Ok
-}
-
-select_preop :: proc(sql: ^Streamql, s: ^Select, q: ^Query) -> Result {
-	if len(s.select_list) != 0 {
-		s.select_idx = 0
-	}
-
-	return not_implemented()
-}
-
 
 select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 	sel := &q.operation
@@ -781,7 +526,6 @@ _select_subquery :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 	not_implemented()
 	return .Error
 }
-//+private
 
 Process_Result :: enum {
 	Ok,
@@ -996,7 +740,6 @@ Result :: enum u8 {
 	Null, // refering to NULL in SQL
 }
 
-@private
 _Branch_State :: enum u8 {
 	No_Branch,
 	Expect_Expr,
@@ -1036,11 +779,7 @@ destroy :: proc(sql: ^Streamql) {
 
 generate_plans :: proc(sql: ^Streamql, query_str: string) -> Result {
 	if plan_build(sql) == .Error {
-		reset(sql)
 		return .Error
-	}
-	if .Print_Plan in sql.config {
-		plan_print(sql)
 	}
 	return .Ok
 }
@@ -1071,7 +810,6 @@ exec_plans :: proc(sql: ^Streamql, limit: int = bits.I32_MAX) -> Result {
 	}
 
 	if res == .Error || i >= len(sql.queries) {
-		reset(sql)
 	}
 
 	return res
@@ -1080,30 +818,12 @@ exec_plans :: proc(sql: ^Streamql, limit: int = bits.I32_MAX) -> Result {
 exec :: proc(sql: ^Streamql, query_str: string) -> Result {
 	generate_plans(sql, query_str) or_return
 	if .Check in sql.config {
-		reset(sql)
 		return .Ok
 	}
 
 	return exec_plans(sql)
 }
 
-reset :: proc(sql: ^Streamql) {
-	clear(&sql.queries)
-}
-
-add_schema_path :: proc(sql: ^Streamql, path: string, throw: bool = true) -> Result {
-	if !os.is_dir(path) {
-		if throw {
-			fmt.eprintf("`%s' does not appear to be a directory\n", path)
-		}
-		return .Error
-	}
-
-	append(&sql.schema_paths, strings.clone(path))
-	return .Ok
-}
-
-@private
 not_implemented :: proc(loc := #caller_location) -> Result {
 	fmt.fprintln(os.stderr, "not implemented:", loc)
 	return .Error
