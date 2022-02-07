@@ -58,7 +58,6 @@ _Branch_State :: enum u8 {
 }
 
 Streamql :: struct {
-	parser: Parser,
 	listener: Listener,
 	default_schema: string,
 	schema_map: map[string]^Schema,
@@ -80,7 +79,6 @@ Streamql :: struct {
 
 construct :: proc(sql: ^Streamql, cfg: bit_set[Config] = {}) {
 	sql^ = {
-		parser = make_parser(),
 		schema_paths = make([dynamic]string),
 		queries = make([dynamic]^Query),
 		scopes = make([dynamic]Scope),
@@ -94,14 +92,9 @@ construct :: proc(sql: ^Streamql, cfg: bit_set[Config] = {}) {
 }
 
 destroy :: proc(sql: ^Streamql) {
-	destroy_parser(&sql.parser)
 }
 
 generate_plans :: proc(sql: ^Streamql, query_str: string) -> Result {
-	if parse_parse(sql, query_str) ==  .Error {
-		reset(sql)
-		return .Error
-	}
 	if schema_resolve(sql) == .Error {
 		reset(sql)
 		return .Error
