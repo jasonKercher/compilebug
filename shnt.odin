@@ -1,22 +1,12 @@
 package streamql
 
-
-import "core:math/bits"
-import "core:strings"
-import "core:bufio"
-import "core:fmt"
-import "core:io"
-import "core:os"
 import "bigraph"
 import "fifo"
-
 
 main :: proc()
 {
 	sql: Streamql
-	construct(&sql)
-
-	exec(&sql, "select 1")
+	plan_build(&sql)
 }
 
 Plan_State :: enum {
@@ -107,10 +97,6 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 
 
 	/* Only non-subqueries beyond this point */
-	if q.sub_id != 0 {
-		return .Ok
-	}
-
 	_activate_procs(sql, q)
 
 	return .Ok
@@ -157,12 +143,7 @@ Process :: struct {
 	msg: string,
 	rows_affected: int,
 	_in_buf: []^Record,
-	_in_buf_iedx: u32,
-	max_iters: u16,
 	state: bit_set[Process_State],
-	plan_id: u8,
-	in_src_count: u8,
-	out_src_count: u8,
 }
 
 process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^Record), pipe_count: ^int, base_size: int) {
@@ -198,7 +179,7 @@ process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^
 		 *       containing a group by essentially has 2 roots.
 		 *       We just give in[0] a nudge (like a root).
 		 */
-		if process.action__ == sql_groupby && .Is_Const in process.state {
+		if .Is_Const in process.state {
 			fifo.advance(process.input[0])
 		}
 	}
@@ -230,30 +211,14 @@ Query :: struct {
 	var_source_vars: [dynamic]i32,
 	var_sources: [dynamic]i32,
 	var_expr_vars: [dynamic]i32,
-	into_table_name: string,
-	preview_text: string,
-	top_count: i64,
-	next_idx_ref: ^u32,
-	next_idx: u32,
-	idx: u32,
-	into_table_var: i32,
-	union_id: i32,
-	sub_id: i16,
-	query_total: i16,
 }
 
 
 
 Record :: struct {
 	fields: []string,
-	offset: i64,
-	idx: i64,
 	next: ^Record,
 	ref: ^Record,
-	select_len: i32,
-	ref_count: i16,
-	root_fifo_idx: u8,
-	src_idx: u8,
 }
 
 Schema_Props :: enum {
@@ -265,18 +230,7 @@ Schema_Props :: enum {
 	Must_Run_Once,
 }
 
-Schema_Item :: struct {
-	name: string,
-	loc: i32,
-	width: i32,
-}
-
 Schema :: struct {
-	layout: [dynamic]Schema_Item,
-	name: string,
-	schema_path: string,
-	delim: string,
-	rec_term: string,
 	props: bit_set[Schema_Props],
 }
 
@@ -294,14 +248,6 @@ Select :: struct {
 	select_idx: i32,
 }
 
-make_select :: proc() -> Select {
-	return Select {
-		select__ = _select,
-		select_list = make([dynamic]^Select),
-		select_idx = -1,
-	}
-}
-
 _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 	sel.row_num += 1
 
@@ -310,7 +256,6 @@ _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 		return .Ok
 	}
 
-	recs.offset = sel.offset
 	return .Ok
 }
 
@@ -330,56 +275,17 @@ Process_Result :: enum {
 sqlprocess_recycle :: proc(_p: ^Process, recs: ^Record) {
 	recs := recs
 	for recs != nil {
-		root_fifo := &_p.root_fifo_ref[recs.root_fifo_idx]
+		root_fifo := &_p.root_fifo_ref[0]
 		if recs.ref != nil {
-			if recs.ref.ref_count - 1 == 0 {
 				sqlprocess_recycle(_p, recs.ref)
-			} else {
-				recs.ref.ref_count -= 1
-			}
 			recs.ref = nil
 		}
 
-		recs.ref_count -= 1
 		next_rec := recs.next
 		recs.next = nil
-		if recs.ref_count == 0 {
-			recs.ref_count = 1
-			fifo.add(root_fifo, recs)
-		}
 
 		recs = next_rec
 	}
-}
-
-sql_read :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-sql_cartesian_join :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-sql_hash_join :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-sql_left_join_logic :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-sql_logic :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-sql_groupby :: proc(_p: ^Process) -> Process_Result {
-	not_implemented()
-	return .Error
 }
 
 sql_select :: proc(_p: ^Process) -> Process_Result {
@@ -429,7 +335,7 @@ sql_select :: proc(_p: ^Process) -> Process_Result {
 	iters: u16 = 0
 	for recs := fifo.begin(in_); recs != fifo.end(in_); {
 		iters += 1 
-		if iters >= _p.max_iters || main_select.rows_affected >= current_select.top_count {
+		if main_select.rows_affected >= current_select.top_count {
 			res = .Running
 			break
 		}
@@ -460,35 +366,6 @@ sql_select :: proc(_p: ^Process) -> Process_Result {
 	return res
 }
 
-PIPE_MIN :: 2
-PIPE_MAX :: 1024
-PIPE_DEFAULT :: 16
-PIPE_DEFAULT_THREAD :: 64
-
-Config :: enum u8 {
-	Check,
-	Strict,
-	Thread,
-	Overwrite,
-	Summarize,
-	Parse_Only,
-	Print_Plan,
-	Force_Cartesian,
-	Add_Header,
-	No_Header, /* lol? */
-	_Allow_Stdin,
-	_Delim_Set,
-	_Rec_Term_Set,
-	_Schema_Paths_Resolved,
-}
-
-Quotes :: enum u8 {
-	None,
-	Weak,
-	Rfc4180,
-	All,
-}
-
 Result :: enum u8 {
 	Ok,
 	Running,
@@ -498,23 +375,7 @@ Result :: enum u8 {
 }
 
 Streamql :: struct {
-	default_schema: string,
-	schema_map: map[string]^Schema,
 	schema_paths: [dynamic]string,
 	queries: [dynamic]^Query,
 }
 
-construct :: proc(sql: ^Streamql, cfg: bit_set[Config] = {}) {
-	sql^ = {
-	}
-}
-
-exec :: proc(sql: ^Streamql, query_str: string) -> Result {
-	plan_build(sql)
-	return .Ok
-}
-
-not_implemented :: proc(loc := #caller_location) -> Result {
-	fmt.fprintln(os.stderr, "not implemented:", loc)
-	return .Error
-}
