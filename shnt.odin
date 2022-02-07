@@ -92,33 +92,6 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	}
 }
 
-_update_pipes :: proc(g: ^bigraph.Graph(Process)) {
-	for bigraph.traverse(g) != nil {}
-
-	for n in g.nodes {
-		assert(n.visit_count > 0)
-		n.data.input[0].input_count = u8(n.visit_count)
-		if n.data.input[1] != nil {
-			n.data.input[1].input_count = u8(n.visit_count)
-		}
-	}
-
-	bigraph.reset(g)
-}
-
-_calculate_execution_order :: proc(p: ^Plan) {
-	p.execute_vector = make([]Process, len(p.proc_graph.nodes))
-
-	node := bigraph.traverse(&p.proc_graph)
-	for i := 0; node != nil; i += 1 {
-		p.execute_vector[i] = node.data
-		node = bigraph.traverse(&p.proc_graph)
-	}
-
-	//new_wait_list: []^Process = make([]^Process, len(p.proc_graph.nodes))
-
-}
-
 _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, is_union: bool = false) -> Result {
 	for subq in &q.subquery_exprs {
 		_build(sql, subq) or_return
@@ -151,76 +124,8 @@ _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, i
 	}
 
 	_activate_procs(sql, q)
-	_update_pipes(&q.plan.proc_graph)
-	_calculate_execution_order(&q.plan)
 
 	return .Ok
-}
-
-_print_col_sep :: proc(w: ^bufio.Writer, n: int) {
-	for n := n; n > 0; n -= 1 {
-		bufio.writer_write_byte(w, ' ')
-	}
-	bufio.writer_write_byte(w, '|')
-}
-
-_print :: proc(p: ^Plan) {
-	io_w, ok := io.to_writer(os.stream_from_handle(os.stderr))
-	if !ok {
-		fmt.eprintln("_print failure")
-		return
-	}
-	w: bufio.Writer
-	bufio.writer_init(&w, io_w)
-
-	max_len := len("BRANCH 0")
-
-	for n in p.proc_graph.nodes {
-		if len(n.data.msg) > max_len {
-			max_len = len(n.data.msg)
-		}
-	}
-
-	max_len += 1
-
-	/* Print header */
-	bufio.writer_write_string(&w, "NODE")
-	_print_col_sep(&w, max_len - len("NODE"))
-	bufio.writer_write_string(&w, "BRANCH 0")
-	_print_col_sep(&w, max_len - len("BRANCH 0"))
-	bufio.writer_write_string(&w, "BRANCH 1")
-	bufio.writer_write_byte(&w, '\n')
-
-	for i := 0; i < max_len; i += 1 {
-		bufio.writer_write_byte(&w, '=')
-	}
-	_print_col_sep(&w, 0)
-	for i := 0; i < max_len; i += 1 {
-		bufio.writer_write_byte(&w, '=')
-	}
-	_print_col_sep(&w, 0)
-	for i := 0; i < max_len; i += 1 {
-		bufio.writer_write_byte(&w, '=')
-	}
-
-	for n in p.proc_graph.nodes {
-		bufio.writer_write_byte(&w, '\n')
-		bufio.writer_write_string(&w, n.data.msg)
-		_print_col_sep(&w, max_len - len(n.data.msg))
-
-		length := 0
-		if n.out[0] != nil {
-			bufio.writer_write_string(&w, n.out[0].data.msg)
-			length = len(n.out[0].data.msg)
-		}
-		_print_col_sep(&w, max_len - length)
-		if n.out[1] != nil {
-			bufio.writer_write_string(&w, n.out[1].data.msg)
-		}
-	}
-	bufio.writer_write_byte(&w, '\n')
-	bufio.writer_flush(&w)
-	bufio.writer_destroy(&w)
 }
 
 Process_State :: enum u8 {
@@ -270,28 +175,6 @@ Process :: struct {
 	plan_id: u8,
 	in_src_count: u8,
 	out_src_count: u8,
-}
-
-make_process :: proc(plan: ^Plan, msg: string) -> Process {
-	if plan == nil {
-		return Process {
-			msg = strings.clone(msg),
-			state = {.Is_Enabled, .Wait_In0},
-			max_iters = bits.U16_MAX,
-		}
-	}
-	return Process {
-		msg = strings.clone(msg),
-		plan_id = plan.id,
-		in_src_count = plan.src_count,
-		out_src_count = plan.src_count,
-		state = {.Is_Enabled, .Wait_In0},
-		max_iters = bits.U16_MAX,
-	}
-}
-
-process_destroy :: proc(process: ^Process) {
-	delete(process.msg)
 }
 
 process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^Record), pipe_count: ^int, base_size: int) {
@@ -349,16 +232,6 @@ process_activate :: proc(process: ^Process, root_fifo_vec: ^[dynamic]fifo.Fifo(^
 		pipe_count^ += 1
 		process.aux_root = fifo.new_fifo(^Record, u16(base_size))
 	}
-}
-
-process_enable :: proc(process: ^Process) {
-	not_implemented()
-}
-process_disable :: proc(process: ^Process) {
-	not_implemented()
-}
-process_add_to_wait_list :: proc(waiter: ^Process, waitee: ^Process) {
-	not_implemented()
 }
 
 Query :: struct {
@@ -784,44 +657,13 @@ generate_plans :: proc(sql: ^Streamql, query_str: string) -> Result {
 	return .Ok
 }
 
-exec_plans :: proc(sql: ^Streamql, limit: int = bits.I32_MAX) -> Result {
-	res: Result
-
-	i := 0
-
-	for ; i < len(sql.queries); i += 1 {
-		if .Has_Stepped in sql.queries[i].plan.state {
-			fmt.eprintln("Cannot execute plan that has stepped")
-			return .Error
-		}
-
-		if sql.verbosity > Verbose.Basic {
-			fmt.printf("EXEC: %s\n", sql.queries[i].preview_text)
-		}
-
-		if res == .Error {
-			break
-		}
-
-		if sql.verbosity > Verbose.Quiet {
-			_print_footer(sql.queries[i])
-		}
-		i = int(sql.queries[i].next_idx)
-	}
-
-	if res == .Error || i >= len(sql.queries) {
-	}
-
-	return res
-}
-
 exec :: proc(sql: ^Streamql, query_str: string) -> Result {
 	generate_plans(sql, query_str) or_return
 	if .Check in sql.config {
 		return .Ok
 	}
 
-	return exec_plans(sql)
+	return .Ok
 }
 
 not_implemented :: proc(loc := #caller_location) -> Result {
