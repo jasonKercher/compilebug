@@ -13,19 +13,10 @@ import "fifo"
 
 main :: proc()
 {
-	query_str : string
-
-	cfg: bit_set[Config] = {}
 	sql: Streamql
-	construct(&sql, cfg)
+	construct(&sql)
 
-		query_str = "select 1"
-
-	if exec(&sql, query_str) == .Error {
-		os.exit(2)
-	}
-
-	destroy(&sql)
+	exec(&sql, "select 1")
 }
 
 Plan_State :: enum {
@@ -60,7 +51,7 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 	graph_size := len(q.plan.proc_graph.nodes)
 	union_pipes := 0
 	proc_count := graph_size + union_pipes
-	fifo_base_size := proc_count * int(sql.pipe_factor)
+	fifo_base_size := 0
 
 	root_fifo_vec := make([dynamic]fifo.Fifo(^Record))
 
@@ -87,9 +78,6 @@ _activate_procs :: proc(sql: ^Streamql, q: ^Query) {
 		node.data.root_fifo_ref = &q.plan.root_fifos
 	}
 
-	if sql.verbosity == .Debug {
-		fmt.eprintf("processes: %d\npipes: %d\nroot size: %d\n", proc_count, pipe_count, root_size)
-	}
 }
 
 _build :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process) = nil, is_union: bool = false) -> Result {
@@ -268,24 +256,6 @@ Record :: struct {
 	src_idx: u8,
 }
 
-destroy_record :: proc(rec: ^Record) {
-
-}
-
-record_get :: proc(rec: ^Record, src_idx: u8) -> ^Record {
-	rec := rec
-	for ; rec != nil; rec = rec.next {
-		if rec.src_idx == src_idx {
-			return rec
-		}
-	}
-	return nil
-}
-
-record_get_line :: proc(rec: ^Record) -> string {
-	return ""
-}
-
 Schema_Props :: enum {
 	Is_Var,
 	Is_Const,
@@ -332,37 +302,6 @@ make_select :: proc() -> Select {
 	}
 }
 
-select_apply_process :: proc(q: ^Query, is_subquery: bool) {
-	sel := &q.operation
-	process := &q.plan.op_true.data
-	process.action__ = sql_select
-	process.data = sel
-
-		sel.select__ = _select_subquery
-
-	/* Build plan description */
-	b := strings.make_builder()
-	strings.write_string(&b, "SELECT ")
-
-	first := true
-
-	process.msg = strings.to_string(b)
-
-	process = &q.plan.op_false.data
-	process.state += {.Is_Passive}
-}
-
-select_next_union :: proc(sel: ^Select) -> bool {
-	sel.select_idx += 1
-	return int(sel.select_idx) < len(sel.select_list)
-}
-
-select_verify_must_run :: proc(sel: ^Select) {
-	if .Must_Run_Once in sel.schema.props {
-		sel.schema.props -= {.Must_Run_Once}
-	}
-}
-
 _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 	sel.row_num += 1
 
@@ -373,31 +312,6 @@ _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 
 	recs.offset = sel.offset
 	return .Ok
-}
-
-_select_api :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-_select_order_api:: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-_select_to_const :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-_select_to_list :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	not_implemented()
-	return .Error
-}
-
-_select_subquery :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
-	not_implemented()
-	return .Error
 }
 
 Process_Result :: enum {
@@ -483,28 +397,12 @@ sql_select :: proc(_p: ^Process) -> Process_Result {
 	}
 
 	if .Wait_In0 not_in _p.state {
-		if .Must_Run_Once in main_select.schema.props {
-			main_select.select__(main_select, nil) or_return
-			main_select.rows_affected += 1
-			_p.rows_affected += 1
-			return .Running
-		}
-
 		/* subquery reads expect union schema to
 		 * be "in sync" with the subquery select's
 		 * current schema
 		 */
 		if out != nil && !fifo.is_empty(out) {
 			return .Running
-		}
-
-		if select_next_union(main_select) {
-			_p.state += {.Wait_In0}
-			fifo.set_open(in_, false)
-			/* QUEUED RESULTS */
-			//return .Running
-			not_implemented()
-			return .Error
 		}
 
 
@@ -543,14 +441,7 @@ sql_select :: proc(_p: ^Process) -> Process_Result {
 
 		if out != nil {
 			fifo.add(out, recs)
-		} else if .Is_Const in current_select.schema.props {
 			sqlprocess_recycle(_p, recs)
-		}
-
-		if .Is_Const in current_select.schema.props {
-			_p.state -= {.Wait_In0}
-			res = .Running
-			break
 		}
 
 		recs = fifo.iter(in_)
@@ -591,13 +482,6 @@ Config :: enum u8 {
 	_Schema_Paths_Resolved,
 }
 
-Verbose ::enum u8 {
-	Quiet,
-	Basic,
-	Noisy,
-	Debug,
-}
-
 Quotes :: enum u8 {
 	None,
 	Weak,
@@ -613,64 +497,24 @@ Result :: enum u8 {
 	Null, // refering to NULL in SQL
 }
 
-_Branch_State :: enum u8 {
-	No_Branch,
-	Expect_Expr,
-	Expect_Else,
-	Expect_Exit,
-}
-
 Streamql :: struct {
 	default_schema: string,
 	schema_map: map[string]^Schema,
 	schema_paths: [dynamic]string,
 	queries: [dynamic]^Query,
-	in_delim: string,
-	out_delim: string,
-	rec_term: string,
-	pipe_factor: u32,
-	config: bit_set[Config],
-	branch_state: _Branch_State,
-	in_quotes: Quotes,
-	out_quotes: Quotes,
-	verbosity: Verbose,
 }
 
 construct :: proc(sql: ^Streamql, cfg: bit_set[Config] = {}) {
 	sql^ = {
-		schema_paths = make([dynamic]string),
-		queries = make([dynamic]^Query),
-		config = cfg,
 	}
-
-	sql.pipe_factor = .Thread in sql.config ? PIPE_DEFAULT_THREAD : PIPE_DEFAULT
-
-}
-
-destroy :: proc(sql: ^Streamql) {
-}
-
-generate_plans :: proc(sql: ^Streamql, query_str: string) -> Result {
-	if plan_build(sql) == .Error {
-		return .Error
-	}
-	return .Ok
 }
 
 exec :: proc(sql: ^Streamql, query_str: string) -> Result {
-	generate_plans(sql, query_str) or_return
-	if .Check in sql.config {
-		return .Ok
-	}
-
+	plan_build(sql)
 	return .Ok
 }
 
 not_implemented :: proc(loc := #caller_location) -> Result {
 	fmt.fprintln(os.stderr, "not implemented:", loc)
 	return .Error
-}
-
-_print_footer :: proc(q: ^Query) {
-	not_implemented()
 }
