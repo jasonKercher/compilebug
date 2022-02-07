@@ -48,11 +48,6 @@ select_preop :: proc(sql: ^Streamql, s: ^Select, q: ^Query) -> Result {
 		s.select_idx = 0
 	}
 
-	if s.schema.write_io == .Delimited || 
-		(.Is_Default not_in s.schema.props && .Add_Header not_in sql.config) ||
-		(.Is_Default in s.schema.props && .No_Header in sql.config) {
-		return .Ok
-	}
 	return not_implemented()
 }
 
@@ -100,10 +95,6 @@ select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 	process = &q.plan.op_false.data
 	process.state += {.Is_Passive}
 	writer := &sel.schema.data.(Writer)
-	if writer.type != nil {
-		writer_set_delim(writer, sel.schema.delim)
-		writer_set_rec_term(writer, sel.schema.rec_term)
-	}
 }
 
 select_next_union :: proc(sel: ^Select) -> bool {

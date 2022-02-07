@@ -38,8 +38,6 @@ Schema :: struct {
 	delim: string,
 	rec_term: string,
 	props: bit_set[Schema_Props],
-	write_io: Io,
-	io: Io,
 }
 
 make_schema :: proc() -> Schema {
@@ -68,8 +66,6 @@ schema_copy :: proc(dest: ^Schema, src: ^Schema) {
 		if .Delim_Set not_in dest.props {
 			schema_set_delim(dest, ",")
 		}
-		dest.io = .Delimited
-		dest.write_io = .Delimited
 		dest.props += {.Is_Default}
 		return
 	}
@@ -78,12 +74,6 @@ schema_copy :: proc(dest: ^Schema, src: ^Schema) {
 		schema_set_delim(dest, src.delim)
 	}
 
-	dest.write_io = src.write_io
-	if src.io == nil {
-		dest.io = src.write_io
-	} else {
-		dest.io = src.io
-	}
 	if .Is_Default in src.props {
 		dest.props += {.Is_Default}
 	} else {
@@ -328,7 +318,6 @@ _resolve_file :: proc(sql: ^Streamql, q: ^Query, src: ^Source) -> Result {
 	src.props += {.Must_Reopen}
 	src.schema.props += {.Is_Preresolved}
 	schema_copy(&src.schema, match_schema)
-	r.type = match_schema.write_io
 
 	return .Ok
 }
@@ -361,23 +350,13 @@ _resolve_source :: proc(sql: ^Streamql, q: ^Query, src: ^Source, src_idx: int) -
 		select := v.operation
 		src.schema = select.schema
 		src.schema.props += {.Is_Preresolved}
-		r.type = .Subquery
 	case string:
 		_resolve_file(sql, q, src) or_return
 		if .Is_Default in src.schema.props {
-			r.type = .Delimited
 		}
 	}
 
 	reader_assign(sql, src) or_return
-
-	#partial switch r.type {
-	case .Fixed:
-		schema_preflight(&src.schema)
-		return .Ok
-	case .Subquery:
-		return .Ok
-	}
 
 	rec: Record
 	schema_preflight(&src.schema)
@@ -450,13 +429,13 @@ _group_validation :: proc(q: ^Query, exprs, op_exprs: ^[dynamic]Expression, is_s
 }
 
 @(private = "file")
-_resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result {
+_resolve_query :: proc(sql: ^Streamql, q: ^Query) -> Result {
 	/* First, let's resolve any subquery expressions.
 	 * These should be constant values and are not
 	 * tied to any parent queries
 	 */
 	for sub in &q.subquery_exprs {
-		_resolve_query(sql, sub, union_io)
+		_resolve_query(sql, sub)
 	}
 
 	is_strict := .Strict in sql.config

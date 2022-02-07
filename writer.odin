@@ -31,25 +31,13 @@ Writer :: struct {
 	temp_name: string,
 	temp_node: ^linkedlist.Node(string),
 	fd: os.Handle,
-	type: Io,
 	is_detached: bool,
 }
 
-make_writer :: proc(sql: ^Streamql, write_io: Io) -> Writer {
+make_writer :: proc(sql: ^Streamql) -> Writer {
 	new_writer := Writer {
-		type = write_io,
 		fd = os.stdout,
 	}
-	switch write_io {
-	case .Delimited:
-		new_writer.write_record__ = _delimited_write_record
-		new_writer.data = make_delimited_writer()
-	case .Fixed:
-		new_writer.data = make_fixed_writer()
-	case .Subquery:
-		new_writer.data = make_subquery_writer()
-	}
-
 	return new_writer
 }
 
@@ -91,7 +79,6 @@ writer_close :: proc(w: ^Writer) -> Result {
 
 	/* chmod ?? */
 
-	linkedlist.remove(&_global_remove_list, w.temp_node)
 	w.temp_node = nil
 	return .Ok
 }
@@ -128,7 +115,6 @@ writer_export_temp :: proc(w: ^Writer) -> (file_name: string, res: Result) {
 		_make_temp_file(w) or_return
 	}
 	if w.is_detached {
-		linkedlist.remove(&_global_remove_list, w.temp_node)
 		return w.temp_name, .Ok
 	} else {
 		return w.file_name, .Ok
@@ -150,7 +136,6 @@ _make_temp_file :: proc(w: ^Writer) -> Result {
 		return .Error
 	}
 
-	w.temp_node = linkedlist.push(&_global_remove_list, temp_name)
 	io_writer, ok := io.to_writer(os.stream_from_handle(w.fd))
 	if !ok {
 		fmt.eprintln("to_writer fail")

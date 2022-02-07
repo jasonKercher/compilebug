@@ -24,7 +24,6 @@ Reader :: struct {
 	random_access_file: os.Handle,
 	max_field_idx: i32,
 	skip_rows: i32,
-	type: Io,
 	status: bit_set[Reader_Status],
 }
 
@@ -40,15 +39,7 @@ reader_reopen :: proc(reader: ^Reader) -> Result {
 
 reader_assign :: proc(sql: ^Streamql, src: ^Source) -> Result {
 	reader := &src.schema.data.(Reader)
-	switch reader.type {
-	case .Delimited:
-		return .Ok
-	case .Fixed:
-		return not_implemented()
-	case .Subquery:
-		return not_implemented()
-	}
-	unreachable()
+	return .Ok
 }
 
 reader_start_file_backed_input :: proc(r: ^Reader) {

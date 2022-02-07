@@ -69,16 +69,6 @@ source_resolve_schema :: proc(sql: ^Streamql, src: ^Source) -> Result {
 	r := &src.schema.data.(Reader)
 
 	delim: string
-	#partial switch r.type {
-	case .Delimited:
-		src.schema.io = .Delimited
-	case .Subquery:
-		subquery := src.data.(^Query)
-	case .Fixed:
-		src.schema.write_io = .Fixed
-	case:
-		return .Error
-	}
 
 	schema_set_delim(&src.schema, delim)
 	return .Ok
