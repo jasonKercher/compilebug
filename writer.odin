@@ -5,7 +5,6 @@ import "core:c"
 import "core:io"
 import "core:os"
 import "core:fmt"
-import "linkedlist"
 import "core:bufio"
 import "core:strings"
 import "core:path/filepath"
@@ -26,7 +25,6 @@ Writer :: struct {
 	writer: bufio.Writer,
 	file_name: string,
 	temp_name: string,
-	temp_node: ^linkedlist.Node(string),
 	fd: os.Handle,
 	is_detached: bool,
 }
@@ -76,7 +74,6 @@ writer_close :: proc(w: ^Writer) -> Result {
 
 	/* chmod ?? */
 
-	w.temp_node = nil
 	return .Ok
 }
 

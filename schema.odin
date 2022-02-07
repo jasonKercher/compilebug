@@ -6,7 +6,6 @@ import "core:math/bits"
 import "core:strings"
 import "core:fmt"
 import "core:os"
-import "bytemap"
 import "util"
 
 Schema_Props :: enum {
@@ -32,7 +31,6 @@ Schema_Data :: union {
 Schema :: struct {
 	data: Schema_Data,
 	layout: [dynamic]Schema_Item,
-	item_map: bytemap.Multi(i32),
 	name: string,
 	schema_path: string,
 	delim: string,
