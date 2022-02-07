@@ -111,14 +111,6 @@ schema_resolve :: proc(sql: ^Streamql) -> Result {
 			q.next_idx_ref = nil
 		}
 
-		if ._Delim_Set in sql.config {
-			op_set_delim(&q.operation, sql.out_delim)
-		}
-
-		if ._Rec_Term_Set in sql.config {
-			op_set_rec_term(&q.operation, sql.rec_term)
-		}
-
 		_resolve_query(sql, q) or_return
 	}
 
@@ -411,7 +403,7 @@ _resolve_source :: proc(sql: ^Streamql, q: ^Query, src: ^Source, src_idx: int) -
 	case ^Query:
 		//if src.alias == "" { throw for missing alias?? }
 		_resolve_query(sql, v)
-		select := v.operation.(Select)
+		select := v.operation
 		src.schema = select.schema
 		src.schema.props += {.Is_Preresolved}
 		r.type = .Subquery
@@ -598,8 +590,6 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 	 */
 	if q.orderby != nil && len(q.unions) == 0 {
 		q.orderby.top_count = q.top_count
-	} else {
-		op_set_top_count(&q.operation, q.top_count)
 	}
 
 	/* Now, we should verify that all sources
@@ -616,11 +606,6 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 		_resolve_source(sql, q, &src, i) or_return
 		source_resolve_schema(sql, &src) or_return
 
-		if union_io != nil {
-			op_get_schema(&q.operation).write_io = union_io
-		} else {
-			op_set_schema(&q.operation, &src.schema)
-		}
 
 		if src.join_logic != nil {
 			_assign_logic_group_expressions(src.join_logic, q.sources[:i+1], is_strict) or_return
@@ -631,23 +616,10 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 		}
 	}
 
-	op_schema := op_get_schema(&q.operation)
-	if op_schema != nil && op_schema.write_io == nil {
-		op_set_schema(&q.operation, nil)
-	}
-
 	/* Where clause */
 	_assign_logic_group_expressions(q.where_, q.sources[:], is_strict) or_return
 
 	/* Validate operation expressions */
-	op_exprs := op_get_expressions(&q.operation)
-	if _, is_select := q.operation.(Select); is_select {
-		_resolve_asterisk(op_exprs, q.sources[:]) or_return
-	}
-	_assign_expressions(op_exprs, q.sources[:], is_strict) or_return
-
-	op_add_exprs := op_get_additional_expressions(&q.operation)
-	_assign_expressions(op_add_exprs, q.sources[:], is_strict) or_return
 
 	/* Validate HAVING expressions */
 	_assign_logic_group_expressions(q.having, q.sources[:], is_strict) or_return
@@ -655,7 +627,7 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 	/* Validate ORDER BY expressions */
 	order_exprs: ^[dynamic]Expression
 	if q.orderby != nil {
-		order_preresolve(q.orderby, &q.operation.(Select), q.sources[:]) or_return
+		order_preresolve(q.orderby, &q.operation, q.sources[:]) or_return
 		/* may have changed in preresolve */
 		order_exprs = &q.orderby.expressions
 		_assign_expressions(order_exprs, q.sources[:], is_strict) or_return
@@ -673,13 +645,10 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 		 * re-resolve each operation, HAVING and ORDER BY
 		 * expression to a group
 		 */
-		_group_validation(q, op_exprs, nil, is_summarize) or_return
 		_group_validate_having(q, is_summarize) or_return
-		_group_validation(q, order_exprs, op_exprs, is_summarize) or_return
 	}
 
 	_resolve_unions(sql, q) or_return
-	op_writer_init(sql, q) or_return
 
 	if q.groupby == nil && q.orderby != nil {
 		/* This is normally handled during group processing,
@@ -696,7 +665,6 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 		}
 	}
 
-	schema_preflight(op_schema)
 
 	if q.into_table_name == "" {
 		return .Ok
@@ -724,17 +692,12 @@ _resolve_query :: proc(sql: ^Streamql, q: ^Query, union_io: Io = nil) -> Result 
 			fmt.eprintf("failed to close file `%s'", q.into_table_name)
 			return .Error
 		}
-	} else if _, is_sel := q.operation.(Select); is_sel && .Overwrite in sql.config {
-		fmt.eprintf("cannot SELECT INTO: `%s' already exists\n", q.into_table_name)
-		return .Error
 	}
 	path, err := os.absolute_path_from_relative(q.into_table_name)
 	if err == 0 {
 		fmt.eprintln("failed to get absolute path")
 		return .Error
 	}
-
-	sql.schema_map[path] = op_schema
 
 	return .Ok
 }

@@ -71,7 +71,7 @@ select_resolve_type_from_subquery :: proc(expr: ^Expression) -> Result {
 }
 
 select_apply_process :: proc(q: ^Query, is_subquery: bool) {
-	sel := &q.operation.(Select)
+	sel := &q.operation
 	process := &q.plan.op_true.data
 	process.action__ = sql_select
 	process.data = sel

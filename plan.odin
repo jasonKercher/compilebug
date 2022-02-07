@@ -372,12 +372,6 @@ _operation :: proc(sql: ^Streamql, q: ^Query, entry: ^bigraph.Node(Process), is_
 		}
 	}
 
-	op_apply_process(q, is_union || entry != nil) or_return
-	_check_for_special(&q.plan, &q.plan.op_true.data, op_get_expressions(&q.operation))
-
-	op_add_exprs := op_get_additional_expressions(&q.operation)
-	_check_for_special(&q.plan, &q.plan.op_true.data, op_add_exprs)
-
 	if entry != nil {
 		q.plan.op_true.out[0] = entry
 	}
@@ -486,25 +480,7 @@ _all_roots_are_const :: proc(roots: ^[dynamic]^bigraph.Node(Process)) -> bool {
 
 @(private = "file")
 _search_and_mark_const_selects :: proc(q: ^Query) -> bool {
-	select, is_select := &q.operation.(Select)
-	is_const := true
-
-	for src in q.sources {
-		if subq, is_subq := src.data.(^Query); is_subq {
-			sub_is_const := _search_and_mark_const_selects(subq)
-			if !sub_is_const {
-				is_const = false
-			}
-		} else {
-			is_const = false
-		}
-	}
-
-	if is_select && is_const  {
-		select.schema.props += {.Is_Const}
-	}
-
-	return is_const
+	return false
 }
 
 _get_union_pipe_count :: proc(nodes: ^[dynamic]^bigraph.Node(Process)) -> int {

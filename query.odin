@@ -7,16 +7,8 @@ import "core:fmt"
 import "core:strings"
 import "core:math/bits"
 
-Operation :: union {
-	Set,
-	Branch,
-	Select,
-	Update,
-	Delete,
-}
-
 Query :: struct {
-	operation: Operation,
+	operation: Select,
 	plan: Plan,
 	sources: [dynamic]Source,
 	groupby: ^Group,
@@ -77,7 +69,6 @@ _preflight :: proc(sql: ^Streamql, q: ^Query) -> Result {
 	}
 
 	has_executed := q.plan.op_true == nil || .Is_Complete in q.plan.state
-	op_reset(sql, q, has_executed) or_return
 
 	for src in &q.sources {
 		source_reset(&src, has_executed)
@@ -89,7 +80,6 @@ _preflight :: proc(sql: ^Streamql, q: ^Query) -> Result {
 
 query_prepare :: proc(sql: ^Streamql, q: ^Query) -> Result {
 	_preflight(sql, q) or_return
-	op_preop(sql, q) or_return
 	return plan_reset(&q.plan)
 }
 
@@ -189,11 +179,9 @@ query_distribute_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expressio
 		fn_expr := q.state.f_stack[len(q.state.f_stack) - 1]
 		return function_add_expression(&fn_expr.data.(Expr_Function), expr), .Ok
 	}
-	switch q.state.mode {
+	#partial switch q.state.mode {
 	case .Select_List:
-		return select_add_expression(&q.operation.(Select), expr), .Ok
-	case .Update_List:
-		return update_add_expression(&q.operation.(Update), expr)
+		return nil, .Ok
 	case .Top:
 		q.top_expr = new(Expression)
 		q.top_expr^ = expr^
@@ -208,10 +196,6 @@ query_distribute_expression :: proc(q: ^Query, expr: ^Expression) -> (^Expressio
 		return group_add_expression(q.groupby, expr), .Ok
 	case .Orderby:
 		return order_add_expression(q.orderby, expr), .Ok
-	case .Set:
-		fallthrough
-	case .Declare:
-		return set_set_init_expression(&q.operation.(Set), expr), .Ok
 	case .Aggregate:
 		fallthrough
 	case .If:

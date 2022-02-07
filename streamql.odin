@@ -63,12 +63,9 @@ Streamql :: struct {
 	schema_map: map[string]^Schema,
 	schema_paths: [dynamic]string,
 	queries: [dynamic]^Query,
-	variables: [dynamic]Variable,
-	scopes: [dynamic]Scope,
 	in_delim: string,
 	out_delim: string,
 	rec_term: string,
-	curr_scope: i32,
 	pipe_factor: u32,
 	config: bit_set[Config],
 	branch_state: _Branch_State,
@@ -81,14 +78,11 @@ construct :: proc(sql: ^Streamql, cfg: bit_set[Config] = {}) {
 	sql^ = {
 		schema_paths = make([dynamic]string),
 		queries = make([dynamic]^Query),
-		scopes = make([dynamic]Scope),
 		config = cfg,
 	}
 
 	sql.pipe_factor = .Thread in sql.config ? PIPE_DEFAULT_THREAD : PIPE_DEFAULT
 
-	/* scopes[0] == global scope */
-	append(&sql.scopes, make_scope())
 }
 
 destroy :: proc(sql: ^Streamql) {
@@ -163,10 +157,6 @@ exec :: proc(sql: ^Streamql, query_str: string) -> Result {
 
 reset :: proc(sql: ^Streamql) {
 	clear(&sql.queries)
-	clear(&sql.scopes)
-
-	/* scopes[0] == global scope */
-	append(&sql.scopes, make_scope())
 }
 
 add_schema_path :: proc(sql: ^Streamql, path: string, throw: bool = true) -> Result {
