@@ -102,27 +102,6 @@ _preempt :: proc(p: ^Plan) {
 }
 
 @(private = "file")
-_check_for_special_expr :: proc(p: ^Plan, process: ^Process, expr: ^Expression) {
-	#partial switch v in &expr.data {
-	case Expr_Subquery:
-		process_add_to_wait_list(process, &v.plan.op_true.data)
-	}
-}
-
-@(private = "file")
-_check_for_special_exprs :: proc(p: ^Plan, process: ^Process, exprs: ^[dynamic]Expression) {
-	if exprs == nil {
-		return
-	}
-	exprs := exprs
-	for e in exprs {
-		_check_for_special_expr(p, process, &e)
-	}
-}
-
-_check_for_special :: proc{_check_for_special_expr, _check_for_special_exprs}
-
-@(private = "file")
 _from :: proc(sql: ^Streamql, q: ^Query) -> Result {
 	if len(q.sources) == 0 {
 		return .Ok

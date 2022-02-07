@@ -8,9 +8,7 @@ Select_Call :: proc(sel: ^Select, recs: ^Record) -> Process_Result
 Select :: struct {
 	select__: Select_Call,
 	schema: Schema,
-	expressions: [dynamic]Expression,
 	select_list: [dynamic]^Select,
-	const_dest: ^Expression,
 	top_count: i64,
 	offset: i64,
 	row_num: i64,
@@ -21,7 +19,6 @@ Select :: struct {
 make_select :: proc() -> Select {
 	return Select {
 		select__ = _select,
-		expressions = make([dynamic]Expression),
 		select_list = make([dynamic]^Select),
 		select_idx = -1,
 	}
@@ -31,10 +28,6 @@ select_reset :: proc(s: ^Select) -> Result {
 	s.offset = 0
 	s.row_num = 0
 	s.rows_affected = 0
-
-	if s.const_dest != nil {
-		return not_implemented()
-	}
 
 	if len(s.select_list) != 0 {
 		s.select_idx = 0
@@ -51,19 +44,6 @@ select_preop :: proc(sql: ^Streamql, s: ^Select, q: ^Query) -> Result {
 	return not_implemented()
 }
 
-select_add_expression :: proc(s: ^Select, expr: ^Expression) -> ^Expression {
-	append(&s.expressions, expr^)
-	return &s.expressions[len(s.expressions) - 1]
-}
-
-select_apply_alias :: proc(s: ^Select, alias: string) {
-	expr := &s.expressions[len(s.expressions) - 1]
-	expr.alias = strings.clone(alias)
-}
-
-select_resolve_type_from_subquery :: proc(expr: ^Expression) -> Result {
-	return not_implemented()
-}
 
 select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 	sel := &q.operation
@@ -71,24 +51,13 @@ select_apply_process :: proc(q: ^Query, is_subquery: bool) {
 	process.action__ = sql_select
 	process.data = sel
 
-	if sel.const_dest != nil {
-			sel.select__ = _select_to_const
-	} else if is_subquery {
 		sel.select__ = _select_subquery
-	}
 
 	/* Build plan description */
 	b := strings.make_builder()
 	strings.write_string(&b, "SELECT ")
 
 	first := true
-	for e in &sel.expressions {
-		if !first {
-			strings.write_byte(&b, ',')
-		}
-		first = false
-		expression_cat_description(&e, &b)
-	}
 
 	process.msg = strings.to_string(b)
 
@@ -105,8 +74,6 @@ select_next_union :: proc(sel: ^Select) -> bool {
 select_verify_must_run :: proc(sel: ^Select) {
 	if .Must_Run_Once in sel.schema.props {
 		sel.schema.props -= {.Must_Run_Once}
-		for expr in sel.expressions {
-		}
 	}
 }
 
@@ -114,16 +81,12 @@ _select :: proc(sel: ^Select, recs: ^Record) -> Process_Result {
 	sel.row_num += 1
 	w := &sel.schema.data.(Writer)
 
-	n := w.write_record__(w, sel.expressions[:], recs) or_return
 
 	if recs == nil {
 		return .Ok
 	}
 
 	recs.offset = sel.offset
-	sel.offset += i64(n)
-	recs.select_len = i32(n)
-
 	return .Ok
 }
 

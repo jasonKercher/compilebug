@@ -15,8 +15,6 @@ foreign libc {
 	@(link_name="mkstemp") _libc_mkstemp :: proc(template: cstring) -> c.int ---
 }
 
-Write_Record_Call :: proc(w: ^Writer, exprs: []Expression, recs: ^Record, bufw: ^bufio.Writer = nil) -> (int, Process_Result)
-
 Writer_Data :: union {
 	Delimited_Writer,
 	Fixed_Writer,
@@ -25,7 +23,6 @@ Writer_Data :: union {
 
 Writer :: struct {
 	data: Writer_Data,
-	write_record__: Write_Record_Call,
 	writer: bufio.Writer,
 	file_name: string,
 	temp_name: string,
@@ -169,48 +166,6 @@ make_delimited_writer :: proc() -> Delimited_Writer {
 		delim = ",",
 		rec_term = "\n",
 	}
-}
-
-_delimited_write_record :: proc(w: ^Writer, exprs: []Expression, recs: ^Record, bufw: ^bufio.Writer = nil) -> (int, Process_Result) {
-	bufw := bufw
-	exprs := exprs
-	if bufw == nil {
-		bufw = &w.writer
-	}
-
-	delimw := &w.data.(Delimited_Writer)
-	written_len := 0
-	n: int
-
-	for expr, i in &exprs {
-		if i > 0 {
-			n, _ = bufio.writer_write_string(bufw, delimw.delim)
-			written_len += n
-		}
-
-		if aster, is_aster := expr.data.(Expr_Asterisk); is_aster {
-			src_idx := i32(aster)
-			rec := record_get(recs, u8(src_idx))
-			full_rec := record_get_line(rec)
-			n, _ = bufio.writer_write_string(bufw, full_rec)
-			written_len += n
-			continue
-		}
-
-		/* TODO: type check on strict mode */
-
-		s, res := expression_get_string(&expr, recs)
-		if res == .Error {
-			return written_len, .Error
-		}
-		n, _ = bufio.writer_write_string(bufw, s)
-		written_len += n
-	}
-
-	n, _ = bufio.writer_write_string(bufw, delimw.rec_term)
-	written_len += n
-
-	return written_len, .Ok
 }
 
 /** Fixed_Writer **/

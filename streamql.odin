@@ -88,10 +88,6 @@ destroy :: proc(sql: ^Streamql) {
 }
 
 generate_plans :: proc(sql: ^Streamql, query_str: string) -> Result {
-	if schema_resolve(sql) == .Error {
-		reset(sql)
-		return .Error
-	}
 	if plan_build(sql) == .Error {
 		reset(sql)
 		return .Error
